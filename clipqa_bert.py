@@ -98,12 +98,10 @@ class CLIPQA(nn.Module):
         self.mapping = self.mapping.to(device)
         
         if freeze_img:
-            for p in self.img_model.parameters():
-                p.requires_grad = False
+            freeze(self.img_model)
         
         if freeze_txt:
-            for p in self.txt_model.parameters():
-                p.requires_grad = False
+            freeze(self.txt_model)
                 
         self.lm_head = nn.Linear(txt_model.config.dim, txt_model.config.vocab_size, bias=False)
         self.lm_head = self.lm_head.to(device)
@@ -186,6 +184,15 @@ def get_split(split, cocoqa_dir, txt_transform):
     assert len(images) == len(questions) == len(answers)
     
     return make_data(images, questions, answers, txt_transform)
+
+
+def freeze(module):
+    for p in module.parameters():
+        p.requires_grad = False
+
+def unfreeze(module):
+    for p in module.parameters():
+        p.requires_grad = True
 
 
 def train(model, train_dataloader, val_dataloader, optimizer, loss_fxn, epochs, eval_steps):    
@@ -380,6 +387,9 @@ if __name__ == '__main__':
     parser.add_argument('--epochs', dest='epochs', required=False,
                         default=1, help='Number of training epochs',
                         type=int)
+    parser.add_argument('--checkpoint', dest='checkpoint', required=False,
+                        default=None, help='Path to model checkpoint want to start training from',
+                        type=str)
     args = parser.parse_args()
 
     # get CLIP model
@@ -420,6 +430,19 @@ if __name__ == '__main__':
 
     # initialize model, optimizer, and loss function
     model = CLIPQA(img_model, txt_model, txt_transform, args.hidden_dim, args.freeze_img, args.freeze_txt, DEVICE)
+    if args.checkpoint is not None:
+        print(f"Loading checkpoint from checkpoints/{args.checkpoint}")
+        model.load_state_dict(torch.load(f'checkpoints/{args.checkpoint}'))
+        if args.freeze_txt:
+            freeze(model.txt_model)
+        else:
+            print('unfreezeing txt model')
+            unfreeze(model.txt_model)
+        if args.freeze_txt:
+            freeze(model.img_model)
+        else:
+            unfreeze(model.img_model)
+    
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
     loss_fxn = nn.CrossEntropyLoss()
 
