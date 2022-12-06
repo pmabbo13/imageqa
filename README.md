@@ -27,4 +27,4 @@ An example command to train a model with 2 linear layers in the mapping network 
     
 ### Results
   
-  A paper discussing our implentation and results is found in `clipqa.pdf`.
+  A paper discussing our implentation and results is found in `clipqa.pdf`. The `\results` directory displays training and validtion loss plots for various architectures we experimented with.
