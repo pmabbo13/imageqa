@@ -79,23 +79,28 @@ class ImageQADataset(Dataset):
 
 class CLIPQA(nn.Module):
     
-    def __init__(self, img_model, txt_model, txt_transform, mlp_hidden_dim, freeze_img=True, freeze_txt=False, device='cpu'):
+    def __init__(self, img_model, txt_model, txt_transform, mlp_hidden_dim, num_mlp_layers, freeze_img=True, freeze_txt=False, device='cpu'):
         
         super().__init__()
 
+        self.num_mlp_layers = num_mlp_layers
         self.mlp_hidden_dim = mlp_hidden_dim
         self.txt_transform = txt_transform
         self.img_model = img_model.to(device)
         self.txt_model = txt_model.to(device)
         self.device = device
-                
-        self.mapping = nn.Sequential(
-            nn.Linear(img_model.config.hidden_size, mlp_hidden_dim),
-            nn.ReLU(),
-            nn.Linear(mlp_hidden_dim, txt_model.config.dim),
-            nn.ReLU()
-        )
-        self.mapping = self.mapping.to(device)
+        
+        if num_mlp_layers > 0:
+            mlp_layers = []
+            for i in range(num_mlp_layers):
+                in_dim = img_model.config.hidden_size if i == 0 else mlp_hidden_dim
+                out_dim = txt_model.config.dim if i+1 == num_mlp_layers else mlp_hidden_dim
+                linear = nn.Linear(in_dim, out_dim)
+                relu = nn.ReLU()
+                mlp_layers += [linear, relu]
+            
+            self.mapping = nn.Sequential(*mlp_layers)
+            self.mapping = self.mapping.to(device)
         
         if freeze_img:
             freeze(self.img_model)
@@ -112,7 +117,7 @@ class CLIPQA(nn.Module):
         clip_output = self.img_model(pixel_values=input_img).last_hidden_state
         
         # pass it through mapping network
-        if self.mlp_hidden_dim == 0:
+        if self.num_mlp_layers == 0:
             img_embedding = clip_output
         else:
             img_embedding = self.mapping(clip_output)
@@ -372,14 +377,14 @@ if __name__ == '__main__':
     parser.add_argument('--learning_rate', dest='learning_rate', required=False,
                         default=1e-4, help='The training learning rate',
                         type=float)
+    parser.add_argument('--num_layers', dest='num_layers', required=False,
+                        default=2, help='Number of linear layers in mapping network',
+                        type=int)
     parser.add_argument('--hidden_dim', dest='hidden_dim', required=False,
                         default=1024, help='Size of hidden layer for mapping network',
                         type=int)
     parser.add_argument('--freeze_txt', dest='freeze_txt', required=False,
                         default=False, help='Freeze weights for text model',
-                        type=bool)
-    parser.add_argument('--freeze_img', dest='freeze_img', required=False,
-                        default=True, help='Freeze weights for vision model',
                         type=bool)
     parser.add_argument('--eval_steps', dest='eval_steps', required=False,
                         default=200, help='Number of training iterations until evaluated on dev. set',
@@ -429,19 +434,19 @@ if __name__ == '__main__':
     test_dataloader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=True)
 
     # initialize model, optimizer, and loss function
-    model = CLIPQA(img_model, txt_model, txt_transform, args.hidden_dim, args.freeze_img, args.freeze_txt, DEVICE)
+    print(f"Model Parameters:\n\tFreeze Text: {args.freeze_txt}\n\tMLP layers: {args.num_layers}\n\tHidden Dim: {args.hidden_dim}\n")
+    model = CLIPQA(img_model, txt_model, txt_transform, args.hidden_dim, args.num_layers, True, args.freeze_txt, DEVICE)
     if args.checkpoint is not None:
         print(f"Loading checkpoint from checkpoints/{args.checkpoint}")
         model.load_state_dict(torch.load(f'checkpoints/{args.checkpoint}'))
-        if args.freeze_txt:
+        if args.freeze_txt is True:
+            print('freezeing txt model')
             freeze(model.txt_model)
         else:
             print('unfreezeing txt model')
             unfreeze(model.txt_model)
-        if args.freeze_txt:
-            freeze(model.img_model)
-        else:
-            unfreeze(model.img_model)
+        
+        freeze(model.img_model)
     
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
     loss_fxn = nn.CrossEntropyLoss()
